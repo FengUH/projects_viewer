@@ -18,14 +18,14 @@ Feng EEG Project Viewer is an interactive Streamlit app that demonstrates a comp
 
 * CNN-based classification between Depression and AD
 
-* ynamic Functional Network Connectivity (dFNC) and brain-state transitions
+* Dynamic Functional Network Connectivity (dFNC) and brain-state transitions
 
 The goal is to provide a clean, interview-ready, and research-oriented demo that highlights Feng’s expertise in neuroscience, signal processing, machine learning, and scientific visualization.
 
 ---
 
 ## 🧩 Key Features
-1️⃣ Multi-Channel EEG Signals
+1. Multi-Channel EEG Signals
 
 Simulated multi-channel EEG time series
 
@@ -33,7 +33,7 @@ Optional smoothing / denoising
 
 Sliding-window segmentation for downstream analysis
 
-2️⃣ Functional Connectivity Matrices
+2. Functional Connectivity Matrices
 
 Correlation / statistical-dependency–based connectivity
 
