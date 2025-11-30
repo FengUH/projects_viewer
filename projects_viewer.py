@@ -1,0 +1,1177 @@
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+
+# ==========================
+# Page configuration
+# ==========================
+st.set_page_config(
+    page_title="Project Viewer - Feng",
+    page_icon="🧠",
+    layout="wide",
+)
+
+# Header
+st.markdown(
+    """
+    <div style="padding: 0.5rem 0 0.3rem 0;">
+      <h1 style="margin-bottom: 0.2rem;">🧠 Feng Project Viewer</h1>
+      <p style="color:#6b7280; margin-bottom:0.5rem; line-height:1.45;">
+        An interactive demo summarizing Feng's prior works — including multi-channel EEG
+        <b>time-series processing</b> and <b>statistical / linear-regression modeling</b> for patient assessment and prediction.  
+        The demo also showcases <b>CNN-based patient phenotyping</b> and <b>k-means clustering</b> for 
+        temporal-pattern discovery and dynamic brain-state classification.
+      </p>
+    </div>
+    <hr style="margin-top:0.3rem; margin-bottom:0.8rem;"/>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Reusable HTML divider
+LIGHT_DIVIDER = """
+<hr style="
+  margin: 1.0rem 0 1.0rem 0;
+  border: 0;
+  border-top: 2px solid #d4d4d8;
+  background-color: #e5e7eb;
+"/>
+"""
+
+# ==========================
+# Simulated EEG (synthetic demo data)
+# ==========================
+@st.cache_data
+def simulate_eeg(n_channels=16, n_seconds=10, fs=256):
+    t = np.arange(0, n_seconds, 1.0 / fs)
+    data = np.zeros((n_channels, t.size))
+    rng = np.random.default_rng(42)
+
+    for ch in range(n_channels):
+        delta = np.sin(2 * np.pi * rng.uniform(1, 3) * t)
+        alpha = 0.5 * np.sin(
+            2 * np.pi * rng.uniform(8, 12) * t + rng.uniform(0, 2 * np.pi)
+        )
+        beta = 0.3 * np.sin(
+            2 * np.pi * rng.uniform(15, 25) * t + rng.uniform(0, 2 * np.pi)
+        )
+        noise = 0.5 * rng.normal(size=t.size)
+        data[ch, :] = delta + alpha + beta + noise
+
+    channel_names = [
+        "Fp1",
+        "Fp2",
+        "F3",
+        "F4",
+        "C3",
+        "C4",
+        "P3",
+        "P4",
+        "O1",
+        "O2",
+        "Fz",
+        "Cz",
+        "Pz",
+        "T3",
+        "T4",
+        "Oz",
+    ][:n_channels]
+
+    return t, data, channel_names
+
+
+FS = 256
+N_CHANNELS = 16
+N_SECONDS = 10
+t, eeg_data, channel_names = simulate_eeg(N_CHANNELS, N_SECONDS, FS)
+
+# ==========================
+# Sidebar: global controls
+# ==========================
+st.sidebar.markdown("### ⚙️ Global Controls")
+st.sidebar.caption("Configure analysis window and the number of channels displayed.")
+
+window_length = st.sidebar.number_input(
+    "Window Length (seconds)",
+    min_value=0.5,
+    max_value=5.0,
+    value=2.0,
+    step=0.5,
+)
+
+max_start = max(0.0, N_SECONDS - window_length)
+window_start = st.sidebar.number_input(
+    "Window Start (seconds)",
+    min_value=0.0,
+    max_value=float(max_start),
+    value=1.0,
+    step=0.1,
+)
+
+n_show_channels = st.sidebar.number_input(
+    "Number of Channels to Show",
+    min_value=1,
+    max_value=N_CHANNELS,
+    value=8,
+    step=1,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🧹 Filtering")
+
+show_filtered = st.sidebar.checkbox(
+    "Show Smoothed (Filtered) EEG",
+    value=True,
+    help="Apply a simple moving-average filter to each channel.",
+)
+
+smooth_level = st.sidebar.number_input(
+    "Smoothing Kernel Size",
+    min_value=3,
+    max_value=51,
+    value=3,
+    step=2,
+)
+
+# ==========================
+# Utility: moving-average smoothing
+# ==========================
+def moving_average_filter(data, kernel_size=15):
+    """Apply a 1D moving-average filter channel-wise."""
+    if kernel_size < 3:
+        return data
+    kernel = np.ones(kernel_size) / kernel_size
+    filtered = np.zeros_like(data)
+    for ch in range(data.shape[0]):
+        filtered[ch, :] = np.convolve(data[ch, :], kernel, mode="same")
+    return filtered
+
+
+# ==========================
+# Utility: multi-channel EEG plotting
+# ==========================
+def plot_eeg_signals(t, data, channel_names, title):
+    """
+    Plot multi-channel EEG with automatic vertical spacing and padded
+    y-limits for a cleaner presentation.
+    """
+    n_channels = data.shape[0]
+
+    stds = np.std(data, axis=1)
+    spacing = np.max(stds) * 4.0
+    pad = spacing * 0.6
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+
+    for idx in range(n_channels):
+        offset = idx * spacing
+        ax.plot(t, data[idx, :] + offset, linewidth=0.9)
+        ax.text(
+            t[0] - (t[-1] * 0.015),
+            offset,
+            channel_names[idx],
+            va="center",
+            ha="right",
+            fontsize=8,
+        )
+
+    ax.set_title(title, fontsize=11)
+    ax.set_xlabel("Time (s)")
+    ax.set_yticks([])
+    ax.grid(alpha=0.22, linestyle="--")
+
+    ymin = -pad
+    ymax = (n_channels - 1) * spacing + pad
+    ax.set_ylim(ymin, ymax)
+
+    fig.tight_layout()
+    return fig
+
+
+# ==========================
+# Utility: compact connectivity matrix plot
+# ==========================
+CMAP = "viridis"
+
+
+def plot_connectivity_matrix(
+    conn_matrix,
+    chan_names,
+    title="Connectivity Matrix",
+    vmin=-1,
+    vmax=1,
+    fig_size=(3.0, 1.8),
+    title_fontsize=8,
+    tick_fontsize=5,
+    cbar_labelsize=6,
+):
+    """Render a correlation-based connectivity matrix with minimal margins."""
+    fig, ax = plt.subplots(figsize=fig_size)
+
+    im = ax.imshow(conn_matrix, vmin=vmin, vmax=vmax, origin="lower", cmap=CMAP)
+
+    ax.set_xticks(range(len(chan_names)))
+    ax.set_yticks(range(len(chan_names)))
+    ax.set_xticklabels(chan_names, rotation=90, fontsize=tick_fontsize)
+    ax.set_yticklabels(chan_names, fontsize=tick_fontsize)
+
+    if title:
+        ax.set_title(title, fontsize=title_fontsize)
+
+    cbar = fig.colorbar(im, ax=ax, fraction=0.02, pad=0.03)
+    cbar.ax.tick_params(labelsize=tick_fontsize - 1)
+    cbar.set_label("Corr", fontsize=cbar_labelsize)
+
+    plt.subplots_adjust(left=0.22, right=0.86, top=0.82, bottom=0.32)
+    return fig
+
+
+# ==========================
+# Extract current time window
+# ==========================
+start_idx = int(window_start * FS)
+end_idx = int((window_start + window_length) * FS)
+start_idx = max(0, start_idx)
+end_idx = min(eeg_data.shape[1], end_idx)
+
+t_window = t[start_idx:end_idx]
+eeg_window = eeg_data[: int(n_show_channels), start_idx:end_idx]
+chan_window_names = channel_names[: int(n_show_channels)]
+
+# Filtered data and window-level connectivity (shared across tabs)
+eeg_filtered_full = moving_average_filter(eeg_data, kernel_size=int(smooth_level))
+eeg_filtered_window = (
+    eeg_filtered_full[: int(n_show_channels), start_idx:end_idx]
+    if show_filtered
+    else None
+)
+
+if eeg_filtered_window is not None:
+    conn_source = eeg_filtered_window
+else:
+    conn_source = eeg_window
+
+conn_matrix = np.corrcoef(conn_source)
+
+# ======================================================
+# Tabs
+# ======================================================
+tab1, tab23, tab4, tab5 = st.tabs(
+    [
+        "1. Time Series EEG Signals",
+        "2. Statistics & Regression",
+        "3. CNN-based Phenotyping",
+        "4. K-means Pattern Recognition",
+    ]
+)
+
+# ------------------------------------------------------
+# Tab 1: EEG signals and window-level connectivity
+# ------------------------------------------------------
+with tab1:
+    st.markdown("#### 1️⃣ Multi-channel EEG (Raw & Filtered)")
+
+    col_left, col_right = st.columns([3, 2])
+    with col_left:
+        st.caption(
+            f"Showing {int(n_show_channels)} channels, "
+            f"time window {window_start:.1f}–{window_start+window_length:.1f} s."
+        )
+
+    fig_raw = plot_eeg_signals(
+        t_window,
+        eeg_window,
+        chan_window_names,
+        title="Raw EEG",
+    )
+    st.pyplot(fig_raw, clear_figure=True)
+
+    if show_filtered and eeg_filtered_window is not None:
+        fig_filt = plot_eeg_signals(
+            t_window,
+            eeg_filtered_window,
+            chan_window_names,
+            title=f"Smoothed EEG (moving-average, kernel = {int(smooth_level)})",
+        )
+        st.pyplot(fig_filt, clear_figure=True)
+
+        st.markdown(
+            f"<div style='color:#6b7280; font-size:0.85rem; text-align:center; margin-top:0.3rem;'>"
+            f"Centered moving-average smoothing with window size "
+            f"<code>K = {int(smooth_level)}</code>."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+        st.latex(
+            r"\tilde{x}(t) = \frac{1}{K}\sum_{i=-\frac{K-1}{2}}^{\frac{K-1}{2}} x(t + i)"
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<hr style='margin:0.8rem 0 0.6rem 0; border-top: 1px solid #e5e7eb;'/>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        "<div style='font-weight:600; margin-bottom:0.2rem;'>Connectivity Matrix of Current Window</div>"
+        "<div style='color:#6b7280; font-size:0.85rem; margin-bottom:0.4rem;'>"
+        "Pairwise Pearson correlation between selected channels."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    fig_conn = plot_connectivity_matrix(
+        conn_matrix,
+        chan_window_names,
+        title="",
+        vmin=-1,
+        vmax=1,
+        fig_size=(6, 3.8),
+        title_fontsize=8,
+        tick_fontsize=6,
+        cbar_labelsize=9,
+    )
+
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        st.pyplot(fig_conn, clear_figure=True, use_container_width=False)
+
+    st.markdown(
+        "<div style='color:#6b7280; font-size:0.85rem; text-align:center; margin-top:0.4rem;'>"
+        "Connectivity between channels <em>i</em> and <em>j</em> is computed as the "
+        "Pearson correlation of their time series within the current window:"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div style='text-align: center;'>", unsafe_allow_html=True)
+    st.latex(
+        r"\rho_{ij} = "
+        r"\frac{\sum_{t}\bigl(x_i(t) - \bar{x}_i\bigr)\bigl(x_j(t) - \bar{x}_j\bigr)}"
+        r"{\sqrt{\sum_{t}\bigl(x_i(t) - \bar{x}_i\bigr)^2}\sqrt{\sum_{t}\bigl(x_j(t) - \bar{x}_j\bigr)^2}}"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------------
+# Tab 2+3: group connectivity, graph metrics, regression
+# ------------------------------------------------------
+with tab23:
+    # ----- Part 1: group-level connectivity -----
+    st.markdown("#### 2️⃣ Group-level Connectivity: Depression vs Alzheimer's")
+
+    rng = np.random.default_rng(123)
+
+    # Normalize within-window connectivity to [0, 0.8] to avoid saturation
+    base_conn_raw = np.abs(conn_matrix)
+    np.fill_diagonal(base_conn_raw, 0.0)
+    n_nodes = base_conn_raw.shape[0]
+
+    max_val = base_conn_raw.max() + 1e-6
+    base_conn = base_conn_raw / max_val * 0.8
+
+    frontal_labels = ["Fp1", "Fp2", "F3", "F4", "Fz"]
+    parietal_labels = ["P3", "P4", "Pz"]
+    posterior_labels = ["O1", "O2", "Oz"]
+
+    frontal_idx = [i for i, ch in enumerate(chan_window_names) if ch in frontal_labels]
+    parietal_idx = [i for i, ch in enumerate(chan_window_names) if ch in parietal_labels]
+    posterior_idx = [
+        i for i, ch in enumerate(chan_window_names) if ch in posterior_labels
+    ]
+
+    def simulate_group_conn(base, scale):
+        """Generate a symmetric group-level connectivity matrix from a base template."""
+        m = base * scale
+        m = (m + m.T) / 2
+        np.fill_diagonal(m, 0.0)
+        return m
+
+    # Baseline scaling fields plus structured group differences
+    scale_dep = np.ones((n_nodes, n_nodes)) + 0.04 * rng.normal(size=(n_nodes, n_nodes))
+    scale_ad = np.ones((n_nodes, n_nodes)) + 0.04 * rng.normal(size=(n_nodes, n_nodes))
+
+    # Depression: reduced frontal–parietal connectivity; mildly enhanced intra-frontal
+    for i in frontal_idx:
+        for j in parietal_idx:
+            scale_dep[i, j] *= 0.3
+            scale_dep[j, i] *= 0.3
+    for i in frontal_idx:
+        for j in frontal_idx:
+            if i != j:
+                scale_dep[i, j] *= 1.25
+
+    # AD: reduced parietal/occipital block; frontal relatively preserved; reduced frontal–occipital
+    par_post_idx = parietal_idx + posterior_idx
+    for i in par_post_idx:
+        for j in par_post_idx:
+            scale_ad[i, j] *= 0.25
+            scale_ad[j, i] *= 0.25
+
+    for i in frontal_idx:
+        for j in posterior_idx:
+            scale_ad[i, j] *= 0.6
+            scale_ad[j, i] *= 0.6
+
+    dep_conn = simulate_group_conn(base_conn, scale_dep)
+    ad_conn = simulate_group_conn(base_conn, scale_ad)
+
+    fig_groups, axes = plt.subplots(
+        1, 2, figsize=(7.0, 2.6), gridspec_kw={"wspace": 0.02}
+    )
+
+    vmin_g, vmax_g = 0.0, 0.8
+
+    im0 = axes[0].imshow(
+        dep_conn, vmin=vmin_g, vmax=vmax_g, origin="lower", cmap=CMAP
+    )
+    axes[0].set_title("Depression", fontsize=9)
+    axes[0].set_xticks(range(n_nodes))
+    axes[0].set_yticks(range(n_nodes))
+    axes[0].set_xticklabels(chan_window_names, rotation=90, fontsize=5)
+    axes[0].set_yticklabels(chan_window_names, fontsize=5)
+
+    im1 = axes[1].imshow(
+        ad_conn, vmin=vmin_g, vmax=vmax_g, origin="lower", cmap=CMAP
+    )
+    axes[1].set_title("Alzheimer's disease", fontsize=9)
+    axes[1].set_xticks(range(n_nodes))
+    axes[1].set_yticks(range(n_nodes))
+    axes[1].set_xticklabels(chan_window_names, rotation=90, fontsize=5)
+    axes[1].set_yticklabels([])
+
+    plt.subplots_adjust(left=0.08, right=0.86, top=0.82, bottom=0.22, wspace=0.02)
+
+    cbar_ax = fig_groups.add_axes([0.88, 0.23, 0.02, 0.55])
+    cbar = fig_groups.colorbar(im1, cax=cbar_ax)
+    cbar.set_ticks([0.0, 0.2, 0.4, 0.6, 0.8])
+    cbar.set_ticklabels(["0.0", "0.2", "0.4", "0.6", "0.8"])
+    cbar.ax.tick_params(labelsize=5)
+    cbar.set_label("Functional connectivity", fontsize=7)
+
+    st.pyplot(fig_groups, clear_figure=True)
+
+    st.markdown(LIGHT_DIVIDER, unsafe_allow_html=True)
+
+    # ----- Part 2: graph metrics (boxplots) -----
+    st.markdown("##### Graph Metrics: Node Degree & Strength")
+
+    THRESH = 0.4
+
+    def compute_graph_metrics(conn, threshold=THRESH):
+        """Compute binary degree and weighted strength given a connectivity matrix."""
+        w = conn.copy()
+        np.fill_diagonal(w, 0.0)
+        binary = (w > threshold).astype(float)
+        degree = binary.sum(axis=0)
+        strength = w.sum(axis=0)
+        return degree, strength
+
+    deg_dep, str_dep = compute_graph_metrics(dep_conn)
+    deg_ad, str_ad = compute_graph_metrics(ad_conn)
+
+    rng_box = np.random.default_rng(2025)
+    n_samples = 40
+
+    # Synthetic distributions (for visualization only)
+    deg_dep_s = rng_box.normal(loc=1.8, scale=0.45, size=n_samples)
+    deg_ad_s = rng_box.normal(loc=0.7, scale=0.35, size=n_samples)
+    str_dep_s = rng_box.normal(loc=0.9, scale=0.35, size=n_samples)
+    str_ad_s = rng_box.normal(loc=1.5, scale=0.35, size=n_samples)
+
+    deg_dep_s = np.clip(deg_dep_s, 0, 4)
+    deg_ad_s = np.clip(deg_ad_s, 0, 4)
+    str_dep_s = np.clip(str_dep_s, 0, 2.5)
+    str_ad_s = np.clip(str_ad_s, 0, 2.5)
+
+    def nice_boxplot(ax, data_pair, labels, ylabel, title, rng_local):
+        """Helper for stylized two-group boxplots with jittered points."""
+        colors = ["#6A8FDB", "#E59E8B"]
+        bp = ax.boxplot(
+            data_pair,
+            labels=labels,
+            patch_artist=True,
+            widths=0.5,
+            showmeans=False,
+            showfliers=True,
+        )
+
+        for patch, col in zip(bp["boxes"], colors):
+            patch.set_facecolor(col)
+            patch.set_alpha(0.25)
+            patch.set_edgecolor("#666666")
+            patch.set_linewidth(1.2)
+
+        for whisker in bp["whiskers"]:
+            whisker.set_color("#888888")
+            whisker.set_linewidth(1.0)
+
+        for cap in bp["caps"]:
+            cap.set_color("#888888")
+            cap.set_linewidth(1.0)
+
+        for median in bp["medians"]:
+            median.set_color("#111111")
+            median.set_linewidth(2.4)
+
+        for i, vals, col in zip([1, 2], data_pair, colors):
+            jitter = (rng_local.random(len(vals)) - 0.5) * 0.18
+            ax.scatter(
+                np.full(len(vals), i) + jitter,
+                vals,
+                color=col,
+                alpha=0.85,
+                s=20,
+                edgecolors="white",
+                linewidths=0.4,
+            )
+
+        all_vals = np.concatenate(data_pair)
+        vmin, vmax = all_vals.min(), all_vals.max()
+        pad = max((vmax - vmin) * 0.2, 0.3)
+        ax.set_ylim(vmin - pad, vmax + pad)
+
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=10)
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.tick_params(axis="x", labelsize=9)
+        ax.tick_params(axis="y", labelsize=9)
+
+    fig_box, axes_box = plt.subplots(1, 2, figsize=(7.5, 3.0))
+
+    nice_boxplot(
+        axes_box[0],
+        [deg_dep_s, deg_ad_s],
+        labels=["Depression", "AD"],
+        ylabel="Degree",
+        title="Node Degree",
+        rng_local=rng_box,
+    )
+
+    nice_boxplot(
+        axes_box[1],
+        [str_dep_s, str_ad_s],
+        labels=["Depression", "AD"],
+        ylabel="Strength",
+        title="Node Strength",
+        rng_local=rng_box,
+    )
+
+    plt.tight_layout()
+    st.pyplot(fig_box, clear_figure=True)
+
+    st.markdown(LIGHT_DIVIDER, unsafe_allow_html=True)
+
+    # ----- Part 3: linear regression (graph metrics → clinical scores) -----
+    st.markdown("##### Linear Regression: Node Degree → Clinical Scores")
+
+    noise_dep = rng_box.normal(0, 3.0, size=n_samples)
+    noise_ad = rng_box.normal(0, 3.0, size=n_samples)
+
+    clin_dep = 15 + 8.0 * deg_dep_s + noise_dep
+    clin_ad = 10 + 6.0 * deg_ad_s + noise_ad
+
+    def fit_linear(x, y):
+        """Return slope, intercept, and R² for a simple linear regression."""
+        slope, intercept = np.polyfit(x, y, 1)
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+        return slope, intercept, r2
+
+    s_dep, b_dep, r2_dep = fit_linear(deg_dep_s, clin_dep)
+    s_ad, b_ad, r2_ad = fit_linear(deg_ad_s, clin_ad)
+
+    fig_reg, axes_reg = plt.subplots(1, 2, figsize=(7.5, 3.0))
+
+    # Depression
+    ax = axes_reg[0]
+    ax.scatter(
+        deg_dep_s,
+        clin_dep,
+        s=25,
+        alpha=0.85,
+        edgecolors="white",
+        linewidths=0.5,
+        color="#6A8FDB",
+    )
+    x_line = np.linspace(deg_dep_s.min(), deg_dep_s.max(), 100)
+    y_line = s_dep * x_line + b_dep
+    ax.plot(x_line, y_line, linewidth=2.0, color="#1f4e8c")
+
+    ax.set_xlabel("Node Degree")
+    ax.set_ylabel("Clinical Score")
+    ax.set_title("Depression: Degree → Clinical Score", fontsize=10)
+    ax.grid(alpha=0.3, linestyle="--")
+    ax.text(
+        0.05,
+        0.95,
+        f"y = {s_dep:.2f}x + {b_dep:.1f}\n$R^2$ = {r2_dep:.2f}",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=8,
+        bbox=dict(boxstyle="round", fc="white", ec="gray", alpha=0.85),
+    )
+
+    # AD
+    ax = axes_reg[1]
+    ax.scatter(
+        deg_ad_s,
+        clin_ad,
+        s=25,
+        alpha=0.85,
+        edgecolors="white",
+        linewidths=0.5,
+        color="#E59E8B",
+    )
+    x_line_ad = np.linspace(deg_ad_s.min(), deg_ad_s.max(), 100)
+    y_line_ad = s_ad * x_line_ad + b_ad
+    ax.plot(x_line_ad, y_line_ad, linewidth=2.0, color="#b4532a")
+
+    ax.set_xlabel("Node Degree")
+    ax.set_ylabel("Clinical Score")
+    ax.set_title("Alzheimer's: Degree → Clinical Score", fontsize=10)
+    ax.grid(alpha=0.3, linestyle="--")
+    ax.text(
+        0.05,
+        0.95,
+        f"y = {s_ad:.2f}x + {b_ad:.1f}\n$R^2$ = {r2_ad:.2f}",
+        transform=ax.transAxes,
+        va="top",
+        ha="left",
+        fontsize=8,
+        bbox=dict(boxstyle="round", fc="white", ec="gray", alpha=0.85),
+    )
+
+    plt.tight_layout()
+    st.pyplot(fig_reg, clear_figure=True)
+
+    st.markdown(LIGHT_DIVIDER, unsafe_allow_html=True)
+
+    # Related publications (author name in normal font, journal names in italics)
+    st.markdown(
+        """
+        <div style="font-size:0.8rem; color:#4b5563; line-height:1.4;">
+          <strong>Related publications by Feng Fang:</strong><br/>
+          <span style="font-style:normal;">
+            <strong>Fang, F.</strong>, Godlewska, B., Cho, R. Y., Savitz, S. I., Selvaraj, S., &amp; Zhang, Y. (2022).
+            Personalizing repetitive transcranial magnetic stimulation for precision depression treatment
+            based on functional brain network controllability and optimal control analysis.
+            <span style="font-style:italic;"><strong>NeuroImage</strong></span>, 260, 119465.
+          </span><br/>
+          <span style="font-style:normal;">
+            <strong>Fang, F.</strong>, Gao, Y., Schulz, P. E., Selvaraj, S., &amp; Zhang, Y. (2021).
+            Brain controllability distinctiveness between depression and cognitive impairment.
+            <span style="font-style:italic;"><strong>Journal of Affective Disorders</strong></span>, 294, 847–856.
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ------------------------------------------------------
+# Tab 3: CNN-based phenotyping (conceptual diagram)
+# ------------------------------------------------------
+with tab4:
+    st.markdown("#### 3️⃣ Connectivity Matrices → CNN → Diagnosis")
+
+    conn_demo = np.abs(conn_matrix)
+
+    # High-level flow: connectivity matrix → CNN → diagnostic probabilities
+    fig_flow = plt.figure(figsize=(8, 3.0))
+    ax_global = fig_flow.add_axes([0, 0, 1, 1])
+    ax_global.set_axis_off()
+
+    # Left: connectivity matrix
+    ax_mat = fig_flow.add_axes([0.05, 0.25, 0.23, 0.55])
+    ax_mat.imshow(conn_demo, cmap=CMAP, origin="lower")
+    ax_mat.set_xticks([])
+    ax_mat.set_yticks([])
+    ax_mat.set_title("Connectivity Matrix", fontsize=10)
+
+    # Middle: stacked CNN blocks
+    ax_cnn = fig_flow.add_axes([0.33, 0.18, 0.26, 0.62])
+    ax_cnn.set_xlim(0, 1)
+    ax_cnn.set_ylim(0, 1)
+    ax_cnn.set_axis_off()
+
+    def draw_stack(x, y, w, h, depth, color):
+        """Draw a shallow stack of rectangles to suggest feature maps."""
+        for i in range(depth):
+            ax_cnn.add_patch(
+                Rectangle(
+                    (x + i * 0.015, y + i * 0.015),
+                    w,
+                    h,
+                    linewidth=1.0,
+                    edgecolor=color,
+                    facecolor=color,
+                    alpha=0.25,
+                )
+            )
+
+    # Three conceptual stages (Conv1, Conv2, FC)
+    draw_stack(0.05, 0.40, 0.18, 0.22, depth=3, color="#2563eb")
+    draw_stack(0.37, 0.40, 0.18, 0.22, depth=3, color="#22c55e")
+    draw_stack(0.70, 0.40, 0.12, 0.18, depth=2, color="#f97316")
+
+    # Arrows between blocks
+    ax_cnn.annotate(
+        "",
+        xy=(0.37, 0.51),
+        xytext=(0.23, 0.51),
+        arrowprops=dict(arrowstyle="->", linewidth=1.4, color="#4b5563"),
+    )
+    ax_cnn.annotate(
+        "",
+        xy=(0.70, 0.51),
+        xytext=(0.55, 0.51),
+        arrowprops=dict(arrowstyle="->", linewidth=1.4, color="#4b5563"),
+    )
+
+    ax_cnn.text(
+        0.50,
+        0.93,
+        "CNN model",
+        ha="center",
+        va="center",
+        fontsize=9,
+        fontweight="bold",
+    )
+
+    # Right: output probabilities (Dep vs AD)
+    ax_out = fig_flow.add_axes([0.69, 0.25, 0.28, 0.55])
+    labels_bar = ["Depression", "AD"]
+    probs = [0.82, 0.18]
+    x_pos = np.arange(len(labels_bar))
+
+    ax_out.bar(x_pos, probs, width=0.5, color=["#2563eb", "#f97316"])
+    ax_out.set_xticks(x_pos)
+    ax_out.set_xticklabels(labels_bar, fontsize=9)
+    ax_out.set_ylim(0, 1.05)
+    ax_out.set_ylabel("Probability", fontsize=9)
+    ax_out.set_title("CNN Output", fontsize=10)
+
+    for x_val, p in zip(x_pos, probs):
+        ax_out.text(
+            x_val,
+            p + 0.03,
+            f"{p*100:.0f}%",
+            ha="center",
+            fontsize=9,
+        )
+
+    ax_out.axhline(0.5, linestyle="--", color="#9ca3af")
+    ax_out.grid(axis="y", alpha=0.25, linestyle="--")
+
+    plt.text(
+        0.5,
+        0.97,
+        "Connectivity matrices as 2D inputs → CNN → Depression vs AD probabilities",
+        ha="center",
+        fontsize=9,
+        transform=fig_flow.transFigure,
+    )
+
+    st.pyplot(fig_flow, clear_figure=True)
+
+    st.markdown("<div style='margin-top:-50.5rem;'></div>", unsafe_allow_html=True)
+
+    # Divider between schematic and performance plots
+    st.markdown(LIGHT_DIVIDER, unsafe_allow_html=True)
+
+    # Lower panel: ROC curve + confusion matrix
+    st.markdown("##### 🧪 CNN Performance")
+
+    fig_perf, axes_perf = plt.subplots(1, 2, figsize=(7.0, 3.0))
+
+    # -------------------------------------------------------
+    # 1. Manually shaped ROC curve (AUC ≈ 0.9+)
+    # -------------------------------------------------------
+    ax_roc = axes_perf[0]
+
+    fpr_knots = np.array(
+        [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.15, 0.20, 0.30, 0.40, 0.60, 0.80, 1.00]
+    )
+    tpr_knots = np.array(
+        [0.00, 0.30, 0.48, 0.62, 0.72, 0.80, 0.88, 0.92, 0.96, 0.98, 0.995, 1.00, 1.00]
+    )
+
+    fpr = np.linspace(0, 1, 300)
+    tpr = np.interp(fpr, fpr_knots, tpr_knots)
+
+    ax_roc.plot(
+        fpr,
+        tpr,
+        color="red",
+        linewidth=2.0,
+        label="AUC = 0.91",
+    )
+    ax_roc.plot(
+        [0, 1],
+        [0, 1],
+        linestyle="--",
+        color="blue",
+        linewidth=1.2,
+    )
+
+    ax_roc.set_xlabel("1 - Specificity (%)")
+    ax_roc.set_ylabel("Sensitivity (%)")
+    ax_roc.set_title("ROC Curve", fontsize=10)
+    ax_roc.grid(alpha=0.3, linestyle="--")
+    ax_roc.legend(fontsize=8, loc="lower right")
+
+    # -------------------------------------------------------
+    # 2. Confusion matrix (synthetic counts, accuracy ≈ 0.92)
+    # -------------------------------------------------------
+    ax_cm = axes_perf[1]
+
+    cm = np.array([[45, 5],
+                   [ 3, 47]])
+
+    im = ax_cm.imshow(cm, cmap="Blues", vmin=0, vmax=50)
+    ax_cm.set_aspect("equal")
+
+    ax_cm.set_xticks([0, 1])
+    ax_cm.set_yticks([0, 1])
+    ax_cm.set_xticklabels(["Depression", "AD"])
+    ax_cm.set_yticklabels(["Depression", "AD"])
+
+    # Rotate y-axis labels by 90° for a more compact and stylized look
+    for tick in ax_cm.get_yticklabels():
+        tick.set_rotation(90)
+        tick.set_va("center")
+
+    ax_cm.set_xlabel("Predicted")
+    ax_cm.set_ylabel("True")
+    ax_cm.set_title("Confusion Matrix", fontsize=10)
+
+    # Cell labels
+    for i in range(2):
+        for j in range(2):
+            ax_cm.text(
+                j,
+                i,
+                str(cm[i, j]),
+                ha="center",
+                va="center",
+                fontsize=9,
+                fontweight="bold",
+                color="#111111",
+            )
+
+    # Cleaner frame
+    ax_cm.spines["top"].set_visible(False)
+    ax_cm.spines["right"].set_visible(False)
+    ax_cm.grid(False)
+
+    # Colorbar
+    cbar = fig_perf.colorbar(im, ax=ax_cm, fraction=0.046, pad=0.04)
+    cbar.ax.tick_params(labelsize=7)
+    cbar.set_label("Count", fontsize=8)
+
+    plt.tight_layout()
+    st.pyplot(fig_perf, clear_figure=True)
+
+
+
+# ------------------------------------------------------
+# Tab 4: dynamic functional connectivity (k-means states)
+# ------------------------------------------------------
+with tab5:
+    st.markdown("#### 4️⃣ Dynamic Functional Network Connectivity (dFNC)")
+
+    def compute_dynamic_conn_and_states(
+        eeg, fs, win_len_sec=2.0, step_ratio=0.5, n_states=4, n_iter=30
+    ):
+        """
+        Compute sliding-window functional connectivity and cluster windows into
+        a finite set of connectivity states using k-means.
+        """
+        rng_km = np.random.default_rng(2025)
+        n_channels, T = eeg.shape
+        win_len = int(win_len_sec * fs)
+        step = max(1, int(win_len * step_ratio))
+
+        if win_len <= 1 or win_len > T:
+            win_len = max(2, min(T, win_len))
+
+        starts = np.arange(0, T - win_len + 1, step)
+        if len(starts) == 0:
+            starts = np.array([0])
+            win_len = T
+
+        conn_list = []
+        t_centers = []
+
+        tri_idx = np.triu_indices(n_channels, k=1)
+        feat_list = []
+
+        for s in starts:
+            e = s + win_len
+            seg = eeg[:, s:e]
+            c = np.corrcoef(seg)
+            conn_list.append(c)
+            feat_list.append(c[tri_idx])
+            center_t = (s + e - 1) / 2.0 / fs
+            t_centers.append(center_t)
+
+        conn_list = np.stack(conn_list, axis=0)
+        feats = np.stack(feat_list, axis=0)
+        t_centers = np.array(t_centers)
+
+        def kmeans_nd(X, k, n_iter=30, rng=None):
+            """Minimal k-means implementation for high-dimensional feature vectors."""
+            if rng is None:
+                rng = np.random.default_rng(2025)
+            n_samples = X.shape[0]
+            k = min(k, n_samples)
+            idx0 = rng.choice(n_samples, size=k, replace=False)
+            centers = X[idx0].copy()
+            for _ in range(n_iter):
+                dists = ((X[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+                labels = np.argmin(dists, axis=1)
+                new_centers = centers.copy()
+                for i in range(k):
+                    m = labels == i
+                    if np.any(m):
+                        new_centers[i] = X[m].mean(axis=0)
+                if np.allclose(new_centers, centers):
+                    break
+                centers = new_centers
+            return labels, centers
+
+        labels, _ = kmeans_nd(feats, n_states, n_iter=n_iter, rng=rng_km)
+        return conn_list, t_centers, labels
+
+    win_sec_for_dfnc = float(window_length)
+    n_states_for_dfnc = 4
+
+    conn_list, t_centers_dfnc, labels_dfnc = compute_dynamic_conn_and_states(
+        eeg_data,
+        fs=FS,
+        win_len_sec=win_sec_for_dfnc,
+        step_ratio=0.5,
+        n_states=n_states_for_dfnc,
+    )
+
+    n_win, n_chan, _ = conn_list.shape
+
+    # Example windows: 1, 2, 3, and the last window
+    if n_win >= 4:
+        example_idx = np.array([0, 1, 2, n_win - 1])
+    else:
+        base_idx = list(range(n_win))
+        while len(base_idx) < 4:
+            base_idx += base_idx
+        example_idx = np.array(base_idx[:4])
+
+    # Simple label smoothing to reduce isolated state flips
+    labels_smooth = labels_dfnc.copy()
+    if n_win >= 3:
+        for i in range(1, n_win - 1):
+            if (labels_dfnc[i - 1] == labels_dfnc[i + 1] != labels_dfnc[i]):
+                labels_smooth[i] = labels_dfnc[i - 1]
+
+    # Re-index so that the first encountered state is displayed as "State 1"
+    base_state = int(labels_smooth[0])
+    labels_display = (labels_smooth - base_state) % n_states_for_dfnc
+
+    # ======================================================
+    # Three-row layout: A / B / C
+    # ======================================================
+    fig_dfnc = plt.figure(figsize=(8, 5.8))
+    gs = GridSpec(
+        3,
+        4,
+        figure=fig_dfnc,
+        height_ratios=[2.1, 1.7, 1.6],
+        hspace=0.9,
+        wspace=0.10,
+    )
+
+    # A. Top panel: multi-channel EEG + sliding windows
+    ax_top = fig_dfnc.add_subplot(gs[0, :])
+
+    n_plot_ch = min(10, n_chan)
+    color_cycle = plt.cm.tab10(np.linspace(0, 1, n_plot_ch))
+
+    offset = 0.0
+    for ch_idx in range(n_plot_ch):
+        sig = eeg_data[ch_idx, :]
+        ax_top.plot(t, sig + offset, linewidth=0.4, color=color_cycle[ch_idx])
+        offset += np.std(sig) * 3.0
+
+    ax_top.set_ylabel("Channels", fontsize=9)
+    ax_top.set_yticks([])
+    ax_top.grid(alpha=0.2, linestyle="--")
+
+    # Highlight selected windows
+    y0, y1 = ax_top.get_ylim()
+    height = y1 - y0
+    step_sec = win_sec_for_dfnc * 0.5
+    visual_half = step_sec * 0.45
+
+    for idx in np.sort(example_idx):
+        c = t_centers_dfnc[idx]
+        left = max(t[0], c - visual_half)
+        right = min(t[-1], c + visual_half)
+
+        rect = Rectangle(
+            (left, y0),
+            right - left,
+            height,
+            linewidth=1.2,
+            edgecolor="black",
+            linestyle="--",
+            facecolor="#fff7c2",
+            alpha=0.45,
+        )
+        ax_top.add_patch(rect)
+
+    # B. Middle row: window-wise connectivity (4 matrices + colorbar)
+    axes_conn = []
+    scale_factors = np.linspace(0.7, 1.3, 4)
+    titles_mid = ["Window 1", "Window 2", "Window 3", "Window N"]
+
+    for k, idx in enumerate(example_idx):
+        ax_mat = fig_dfnc.add_subplot(gs[1, k])
+        axes_conn.append(ax_mat)
+
+        conn_k = conn_list[idx] * scale_factors[k]
+        conn_k = np.clip(conn_k, -1, 1)
+
+        im = ax_mat.imshow(conn_k, vmin=-1, vmax=1, cmap=CMAP, origin="lower")
+        ax_mat.set_xticks([])
+        ax_mat.set_yticks([])
+        ax_mat.set_title(titles_mid[k], fontsize=8)
+
+    fig_dfnc.text(
+        0.70,
+        0.56,
+        "⋯",
+        fontsize=16,
+        ha="center",
+        va="center",
+    )
+
+    # Colorbar attached to the last matrix, padded to avoid overlapping titles
+    cbar = fig_dfnc.colorbar(
+        im,
+        ax=axes_conn[-1],
+        fraction=0.045,
+        pad=0.17,
+    )
+    cbar.ax.tick_params(labelsize=7)
+    cbar.set_label("Correlation", fontsize=8)
+
+    # C. Bottom row: k-means state time course
+    ax_state = fig_dfnc.add_subplot(gs[2, :])
+
+    ax_state.step(
+        t_centers_dfnc,
+        labels_display + 1,
+        where="mid",
+        linewidth=2.0,
+        color="#2563eb",
+    )
+    ax_state.set_xlabel("Time", fontsize=9)
+    ax_state.set_ylabel("States", fontsize=9)
+    ax_state.set_yticks(range(1, n_states_for_dfnc + 1))
+
+    ax_state.set_ylim(0.7, n_states_for_dfnc + 0.3)
+    ax_state.grid(alpha=0.25, linestyle="--")
+
+    # Layout refinement: row labels and horizontal separators
+    fig_dfnc.subplots_adjust(top=0.9, bottom=0.10, left=0.07, right=0.93)
+
+    pos_top = ax_top.get_position()
+    pos_mid = axes_conn[0].get_position()
+    pos_bot = ax_state.get_position()
+
+    label_x = pos_top.x0
+
+    gap_A = 0.014
+    gap_B = 0.050   # slightly larger to avoid overlap with matrices
+    gap_C = 0.016
+
+    fig_dfnc.text(
+        label_x,
+        pos_top.y1 + gap_A,
+        "A. Sliding-window EEG",
+        fontsize=9,
+        fontweight="bold",
+        ha="left",
+        va="bottom",
+        transform=fig_dfnc.transFigure,
+    )
+
+    fig_dfnc.text(
+        label_x,
+        pos_mid.y1 + gap_B,
+        "B. Window-wise connectivity",
+        fontsize=9,
+        fontweight="bold",
+        ha="left",
+        va="bottom",
+        transform=fig_dfnc.transFigure,
+    )
+
+    fig_dfnc.text(
+        label_x,
+        pos_bot.y1 + gap_C,
+        "C. k-means on features from window-wise dFNC → 4 connectivity states",
+        fontsize=9,
+        fontweight="bold",
+        ha="left",
+        va="bottom",
+        transform=fig_dfnc.transFigure,
+    )
+
+    x_left = pos_top.x0
+    x_right = pos_top.x1
+    line_offset = 0.010
+
+    y_sep1 = 0.5 * (pos_top.y0 + pos_mid.y1) + line_offset
+    y_sep2 = 0.5 * (pos_mid.y0 + pos_bot.y1) + line_offset
+
+    for y_sep in (y_sep1, y_sep2):
+        fig_dfnc.add_artist(
+            Line2D(
+                [x_left, x_right],
+                [y_sep, y_sep],
+                transform=fig_dfnc.transFigure,
+                color="#d4d4d8",
+                linewidth=0.9,
+                linestyle="-",
+                alpha=0.9,
+            )
+        )
+
+    st.pyplot(fig_dfnc, clear_figure=True)
+
+    # Extra vertical spacing between figure and publication block
+    st.markdown("<div style='height:0.6rem;'></div>", unsafe_allow_html=True)
+
+    st.markdown(LIGHT_DIVIDER, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div style="font-size:0.8rem; color:#4b5563; line-height:1.4;">
+          <strong>Related publication by Feng Fang:</strong><br/>
+          <span style="font-style:normal;">
+            <strong>Fang, F.</strong>, Potter, T., Nguyen, T., &amp; Zhang, Y. (2020).
+            Dynamic reorganization of the cortical functional brain network in affective processing and cognitive reappraisal.
+            <span style="font-style:italic;"><strong>International Journal of Neural Systems</strong></span>, 30(10), 2050051.
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
