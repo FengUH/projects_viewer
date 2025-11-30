@@ -20,57 +20,39 @@ Feng EEG Project Viewer is an interactive Streamlit app that demonstrates a comp
 
 * Dynamic Functional Network Connectivity (dFNC) and brain-state transitions
 
-The goal is to provide a clean, interview-ready, and research-oriented demo that highlights Feng’s expertise in neuroscience, signal processing, machine learning, and scientific visualization.
-
 ---
 
 ## 🧩 Key Features
-1. Multi-Channel EEG Signals
+1. Multi-Channel Time Series EEG Signals
 
-Simulated multi-channel EEG time series
+* Simulated multi-channel EEG time series
 
-Optional smoothing / denoising
+* Optional smoothing / denoising
 
-Sliding-window segmentation for downstream analysis
+* Sliding-window segmentation for downstream analysis
 
 2. Functional Connectivity Matrices
 
-Correlation / statistical-dependency–based connectivity
+* Correlation / statistical-dependency–based connectivity
 
-Multiple matrices with distinct patterns for visual comparison
+* Multiple matrices with distinct patterns for visual comparison
 
-Publication-style colormaps and clearly labeled axes
+3. CNN Classification (Depression vs. AD)
 
-Connectivity computation formula displayed under the plots
+* Concise CNN architecture summary (convolution, pooling, dense layers)
 
-3️⃣ CNN Classification (Depression vs. AD)
+* ROC curve with AUC ≈ 0.91
 
-80% training / 20% testing data split
+* Confusion matrix with rotated axis labels (Depression vs. AD)
 
-Concise CNN architecture summary (convolution, pooling, dense layers)
+4. Dynamic Functional Network Connectivity (dFNC)
 
-ROC curve with AUC ≈ 0.91
+* Sliding-window functional connectivity estimation
 
-Confusion matrix with rotated axis labels (Depression vs. AD)
+* k-means clustering into multiple network states
 
-Accuracy and loss curves across epochs
+* State-specific connectivity matrices
 
-4️⃣ Dynamic Functional Network Connectivity (dFNC)
-
-Sliding-window functional connectivity estimation
-
-k-means clustering into multiple network states
-
-State-specific connectivity matrices
-
-Timeline plot showing when each state is active
-
-5️⃣ Streamlit UI for Presentations
-
-Wide, clean layout optimized for desktop
-
-Clear section headers and dividers
-
-Figures arranged for storytelling in interviews and talks
+* Timeline plot showing when each state is active
 
 ---
