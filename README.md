@@ -1,8 +1,8 @@
 # 🔗 Live Demo
 
-👉 Click to open the live Streamlit app:
-(Paste your deployed link here — e.g., https://feng-eeg-viewer.streamlit.app
-)
+An interactive demo summarizing Feng's prior works — including multi-channel EEG time-series processing and statistical / linear-regression modeling for patient assessment and prediction. The demo also showcases CNN-based patient phenotyping and k-means clustering for temporal-pattern discovery and dynamic brain-state classification.
+
+👉 Click to open the live Streamlit app: [https://feng-eeg-viewer.streamlit.app](https://fenguh-projects-viewer-projects-viewer-vwnh2n.streamlit.app/)
 
 (Public link — no login required)
 
