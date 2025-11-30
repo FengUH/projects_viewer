@@ -12,13 +12,13 @@ An interactive demo summarizing Feng's prior works — including multi-channel E
 
 Feng EEG Project Viewer is an interactive Streamlit app that demonstrates a complete workflow for:
 
-Multi-channel EEG signal visualization
+### Multi-channel EEG signal visualization
 
-Functional connectivity matrix construction
+### Functional connectivity matrix construction
 
-CNN-based classification between Depression and AD
+### CNN-based classification between Depression and AD
 
-Dynamic Functional Network Connectivity (dFNC) and brain-state transitions
+### Dynamic Functional Network Connectivity (dFNC) and brain-state transitions
 
 The goal is to provide a clean, interview-ready, and research-oriented demo that highlights Feng’s expertise in neuroscience, signal processing, machine learning, and scientific visualization.
 
