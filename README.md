@@ -6,7 +6,7 @@
 
 (Public link — no login required)
 
---
+---
 
 ## 🚀 Project Overview
 
@@ -22,7 +22,7 @@ Dynamic Functional Network Connectivity (dFNC) and brain-state transitions
 
 The goal is to provide a clean, interview-ready, and research-oriented demo that highlights Feng’s expertise in neuroscience, signal processing, machine learning, and scientific visualization.
 
---
+---
 
 ## 🧩 Key Features
 1️⃣ Multi-Channel EEG Signals
@@ -73,4 +73,4 @@ Clear section headers and dividers
 
 Figures arranged for storytelling in interviews and talks
 
---
+---
