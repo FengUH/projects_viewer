@@ -13,7 +13,7 @@ This repository contains a **neuroscience research demo app** built with **Strea
 
 ### 1️⃣ Single-Subject EEG Time-Series Analysis
 
-- Mock loading of a **single-subject EEG recording** (multi-channel).
+- Loading of a **single-subject EEG recording** (multi-channel).
 - Interactive controls for:
   - Time window length & start time  
   - Number of channels to display
@@ -36,10 +36,10 @@ This repository contains a **neuroscience research demo app** built with **Strea
   - **Depression**
   - **Alzheimer’s disease (AD)**
 - Side-by-side comparison of functional connectivity patterns between groups.
-- Graph-theoretic summaries (using synthetic data):
+- Graph-theoretic summaries:
   - **Node degree** and **node strength**
   - Visualized via two-group **boxplots** (Deppression vs AD)
-- Simple **linear regression** from network metrics to mock clinical scores:
+- Simple **linear regression** from network metrics to clinical scores:
   - Scatter plots + fitted lines
   - Regression equation & R² displayed in the figure
 
