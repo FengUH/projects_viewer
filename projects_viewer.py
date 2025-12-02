@@ -22,7 +22,8 @@ st.markdown(
       <p style="color:#6b7280; margin-bottom:0.5rem; line-height:1.45;">
         A neuroscience research tool developed by Feng — integrating single-subject EEG <b>time-series processing</b>, 
         group-level <b>statistical and regression analysis</b>, <b>machine-learning</b>–based disease classification, 
-        and <b>k-means</b>–driven dynamic brain-state discovery.
+        and <b>k-means</b>–driven dynamic brain-state discovery.<br/><br/>
+        Link to github repository: https://github.com/FengUH/projects_viewer/tree/main
       </p>
     </div>
     <hr style="margin-top:0.3rem; margin-bottom:0.8rem;"/>
